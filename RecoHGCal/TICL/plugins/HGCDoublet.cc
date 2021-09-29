@@ -1,5 +1,9 @@
 #include "HGCDoublet.h"
 
+//ZJQ, innerDoublets should be the proper neigDoublets:
+//ZJQ, innerDoublets for in-to-out and outerDoublets for out-to-in 
+//ZJQ, need to make sure what's the strategy 
+//ZJQ, for applying minCosTheta and minCosPointing in out-to-in case
 bool HGCDoublet::checkCompatibilityAndTag(std::vector<HGCDoublet> &allDoublets,
                                           const std::vector<int> &innerDoublets,
                                           const GlobalVector &refDir,
@@ -131,13 +135,26 @@ void HGCDoublet::findNtuplets(std::vector<HGCDoublet> &allDoublets,
     alreadyVisited_ = true;
     tmpNtuplet.push_back(theDoubletId_);
     unsigned int numberOfOuterNeighbors = outerNeighbors_.size();
+    //ZJQ, external_seed flag, need be passed via function argument
+    //ZJQ, update related outIn argument/parameter/variables to extendStartXXX, then almost all codes are same for both out-to-in and in-to-out
+    //ZJQ, extendStart: extend[side/direction]-start[side/direction]
+    bool external_seed_out_in(false);
+    if (external_seed_out_in) {
+      numberOfOuterNeighbors = innerNeighbors_.size();
+    }
     for (unsigned int i = 0; i < numberOfOuterNeighbors; ++i) {
       allDoublets[outerNeighbors_[i]].findNtuplets(
           allDoublets, tmpNtuplet, seedIndex, outInDFS, outInHops, maxOutInHops, outInToVisit);
     }
     if (outInDFS && outInHops < maxOutInHops) {
-      for (auto inN : innerNeighbors_) {
-        outInToVisit.emplace_back(inN, outInHops + 1);
+      if (!external_seed_out_in) {
+        for (auto inN : innerNeighbors_) {
+          outInToVisit.emplace_back(inN, outInHops + 1);
+        }
+      } else {
+        for (auto outN : outerNeighbors_) {
+          outInToVisit.emplace_back(outN, outInHops + 1);
+        }
       }
     }
   }

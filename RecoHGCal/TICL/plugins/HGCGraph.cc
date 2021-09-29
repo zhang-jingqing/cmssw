@@ -28,6 +28,9 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
   isOuterClusterOfDoublets_.resize(layerClusters.size());
   allDoublets_.clear();
   theRootDoublets_.clear();
+  //ZJQ
+  bool external_seed_out_in(false);
+  std::vector<int> neigDoublets;
   bool checkDistanceRootDoubletVsSeed = root_doublet_max_distance_from_seed_squared < 9999;
   float origin_eta;
   float origin_phi;
@@ -44,12 +47,22 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
       origin_eta = 0;
       origin_phi = 0;
     } else {
+      //ZJQ, maxNumberOfLayers is the lastLayer in RecHitTools, same side with seed?
+      //ZJQ, RecHitTools::lastLayer() is for zSide = 0 or 1 or both? seems for both
+      //ZJQ, zSide = 0 for positive, zSide = 1 for negative;
+      //ZJQ, for hit layers, first pos layers, then neg layers?
       auto firstLayerOnZSide = maxNumberOfLayers * zSide;
+      if (external_seed_out_in) {
+        firstLayerOnZSide = maxNumberOfLayers * (zSide + 1) - 1;
+      }
       const auto &firstLayerHisto = histo[firstLayerOnZSide];
       origin_eta = r.origin.eta();
       origin_phi = r.origin.phi();
       int entryEtaBin = firstLayerHisto.etaBin(origin_eta);
       int entryPhiBin = firstLayerHisto.phiBin(origin_phi);
+      //ZJQ, for In-Out, eta/phi window in the extend layer will be enlarged
+      //ZJQ, for Out-In, to keep consistence with In-Out, the extend layer will be narrower which makes in the out layer, the window is enlarged
+      //ZJQ, or for Out-In, just keep same strategy of In-Out, just make the window in extend layer larger?
       // For track-seeded iterations, if the impact point is below a certain
       // eta-threshold, i.e., it has higher eta, make the initial search
       // window bigger in both eta and phi by one bin, to contain better low
@@ -81,10 +94,22 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
       }
     }
 
-    for (int il = 0; il < maxNumberOfLayers - 1; ++il) {
-      for (int outer_layer = 0; outer_layer < std::min(1 + skip_layers, maxNumberOfLayers - 1 - il); ++outer_layer) {
-        int currentInnerLayerId = il + maxNumberOfLayers * zSide;
-        int currentOuterLayerId = currentInnerLayerId + 1 + outer_layer;
+    //ZJQ origin is in-out search/extend
+    //ZJQ need also out-in search/extend
+    int start_layer;
+    for (int il_start = 0; il_start < maxNumberOfLayers - 1; ++il_start) {
+      //int max_extend = std::min(1 + skip_layers, maxNumberOfLayers - il_start);
+      for (int il_extend = 0; il_extend < std::min(1 + skip_layers, maxNumberOfLayers - 1 - il_start); ++il_extend) {
+        int currentInnerLayerId, currentOuterLayerId;
+        if (!external_seed_out_in) {
+          //ZJQ In-to-Out
+          currentInnerLayerId = il_start + maxNumberOfLayers * zSide;
+          currentOuterLayerId = currentInnerLayerId + 1 + il_extend;
+        } else {
+          //ZJQ Out-to-In
+          currentOuterLayerId = maxNumberOfLayers * (zSide + 1) - 1 - il_start;
+          currentInnerLayerId = currentOuterLayerId - 1 - il_extend;
+        }
         auto const &outerLayerHisto = histo[currentOuterLayerId];
         auto const &innerLayerHisto = histo[currentInnerLayerId];
         const int etaLimitIncreaseWindowBin = innerLayerHisto.etaBin(etaLimitIncreaseWindow);
@@ -124,6 +149,7 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
                   LogDebug("HGCGraph") << "Eta and Phi window increased by one" << std::endl;
                 }
               }
+              //ZJQ, Need update eta/phi window of outer layer, in out-to-in search
               const auto etaRangeMin = std::max(0, ieta - etaWindow);
               const auto etaRangeMax = std::min(ieta + etaWindow + 1, nEtaBins);
 
@@ -164,7 +190,21 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
                           << outerClusterId << "]" << std::endl;
                     }
                     isOuterClusterOfDoublets_[outerClusterId].push_back(doubletId);
-                    auto &neigDoublets = isOuterClusterOfDoublets_[innerClusterId];
+                    //auto &neigDoublets = isOuterClusterOfDoublets_[innerClusterId];
+                    //ZJQ, if in-to-out, the neigDoublets is the inner neighbours
+                    //ZJQ, if out-to-in, the neigDoublets is the outer neighbours
+                    neigDoublets.clear();
+                    if (!external_seed_out_in) {
+                      neigDoublets = isOuterClusterOfDoublets_[innerClusterId];
+                    } else {
+                      int thisOuterClusterId = allDoublets_[doubletId].outerClusterId();
+                      for (auto &otherDoublet : allDoublets_) {
+                        int otherInnerClusterId = otherDoublet.innerClusterId();
+                        if (otherInnerClusterId == thisOuterClusterId) {
+                          neigDoublets.push_back(doubletId);
+                        }
+                      }
+                    }
                     auto &thisDoublet = allDoublets_[doubletId];
                     if (verbosity_ > Expert) {
                       LogDebug("HGCGraph")
@@ -172,6 +212,7 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
                           << " with all possible inners doublets link by the innerClusterId: " << innerClusterId
                           << std::endl;
                     }
+                    //ZJQ, should pass a external_seed_out_in flag?
                     bool isRootDoublet = thisDoublet.checkCompatibilityAndTag(allDoublets_,
                                                                               neigDoublets,
                                                                               r.directionAtOrigin,
@@ -230,6 +271,10 @@ void HGCGraphT<TILES>::findNtuplets(std::vector<HGCDoublet::HGCntuplet> &foundNt
   HGCDoublet::HGCntuplet tmpNtuplet;
   tmpNtuplet.reserve(minClustersPerNtuplet);
   std::vector<std::pair<unsigned int, unsigned int>> outInToVisit;
+  //ZJQ, for origin in-to-out search/reconstruction, the outInDFS is used, i.e, first all outer doublets, then inner doublet with same outInDFS
+  //ZJQ, want to applay a dual strategy, outInDFS --> inOutDFS, i.e., first all innter doublets, then outer doublet with same inOutDFS
+  //ZJQ, maybe rename extendStartDFS? first in extend direction's doublets then in start(seed) direction's doublet with same extendStartDFS
+  //ZJQ, almost no need changes in here. Most changes are in HGCDoublet::findNtuplets()
   for (auto rootDoublet : theRootDoublets_) {
     tmpNtuplet.clear();
     outInToVisit.clear();

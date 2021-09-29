@@ -136,7 +136,16 @@ void PatternRecognitionbyCA<TILES>::makeTracksters(
                                        << input.layerClusters[outerCluster].z() << " " << tracksterId << std::endl;
       }
     }
+    //ZJQ: if use global/internal seed, and in-to-out search, showerMinLayerId is the start layer Id
+    //ZJQ: if external seed, and out-to-in search, the start layer Id should be shower'Max'LayerId
+    bool external_seed_out_in(false);
+    unsigned showerStartLayerId = 99999;
+    //ZJQ: showerMinLayerId and showerMaxLayerId related to shower_max_start_layer_id, need check and update
     unsigned showerMinLayerId = 99999;
+    //unsigned showerMaxLayerId = 99999;
+    if (external_seed_out_in) {
+      showerStartLayerId = 0;
+    }
     std::vector<unsigned int> uniqueLayerIds;
     uniqueLayerIds.reserve(effective_cluster_idx.size());
     std::vector<std::pair<unsigned int, unsigned int>> lcIdAndLayer;
@@ -144,37 +153,71 @@ void PatternRecognitionbyCA<TILES>::makeTracksters(
     for (auto const i : effective_cluster_idx) {
       auto const &haf = input.layerClusters[i].hitsAndFractions();
       auto layerId = rhtools_.getLayerWithOffset(haf[0].first);
-      showerMinLayerId = std::min(layerId, showerMinLayerId);
+      if (!external_seed_out_in) {
+        showerStartLayerId = std::min(layerId, showerStartLayerId);
+        showerMinLayerId = showerStartLayerId;
+      } else {
+        showerStartLayerId = std::max(layerId, showerStartLayerId);
+        //showerMaxLayerId = showerStartLayerId;
+      }
       uniqueLayerIds.push_back(layerId);
       lcIdAndLayer.emplace_back(i, layerId);
     }
-    std::sort(uniqueLayerIds.begin(), uniqueLayerIds.end());
+    if (!external_seed_out_in) {
+      std::sort(uniqueLayerIds.begin(), uniqueLayerIds.end());
+    } else {
+      std::sort(uniqueLayerIds.begin(), uniqueLayerIds.end(), std::greater<>());
+    }
     uniqueLayerIds.erase(std::unique(uniqueLayerIds.begin(), uniqueLayerIds.end()), uniqueLayerIds.end());
     unsigned int numberOfLayersInTrackster = uniqueLayerIds.size();
     if (check_missing_layers_) {
       int numberOfMissingLayers = 0;
-      unsigned int j = showerMinLayerId;
+      unsigned int j = showerStartLayerId;
       unsigned int indexInVec = 0;
-      for (const auto &layer : uniqueLayerIds) {
-        if (layer != j) {
-          numberOfMissingLayers++;
-          j++;
-          if (numberOfMissingLayers > max_missing_layers_in_trackster_) {
-            numberOfLayersInTrackster = indexInVec;
-            for (auto &llpair : lcIdAndLayer) {
-              if (llpair.second >= layer) {
-                effective_cluster_idx.erase(llpair.first);
+      //ZJQ
+      if (!external_seed_out_in) {
+        for (const auto &layer : uniqueLayerIds) {
+          if (layer != j) {
+            numberOfMissingLayers++;
+            j++;
+            if (numberOfMissingLayers > max_missing_layers_in_trackster_) {
+              numberOfLayersInTrackster = indexInVec;
+              for (auto &llpair : lcIdAndLayer) {
+                if (llpair.second >= layer) {
+                  effective_cluster_idx.erase(llpair.first);
+                }
               }
+              break;
             }
-            break;
           }
+          indexInVec++;
+          j++;
         }
-        indexInVec++;
-        j++;
+      } else {
+        for (const auto &layer : uniqueLayerIds) {
+          if (layer != j) {
+            numberOfMissingLayers++;
+            j--;
+            if (numberOfMissingLayers > max_missing_layers_in_trackster_) {
+              numberOfLayersInTrackster = indexInVec;
+              for (auto &llpair : lcIdAndLayer) {
+                if (llpair.second <= layer) {
+                  effective_cluster_idx.erase(llpair.first);
+                }
+              }
+              break;
+            }
+          }
+          indexInVec++;
+          j--;
+        }
       }
     }
 
-    if ((numberOfLayersInTrackster >= min_layers_per_trackster_) and (showerMinLayerId <= shower_start_max_layer_)) {
+    //ZJQ: shower_start_max_layer_, the max layer distance from seed to shower start layer?
+    //or just the start layer id since showers should appers from inner to outer after collision happens
+    bool pass_shower_start_max_layer = (showerMinLayerId <= shower_start_max_layer_);
+    if ((numberOfLayersInTrackster >= min_layers_per_trackster_) and pass_shower_start_max_layer) {
       // Put back indices, in the form of a Trackster, into the results vector
       Trackster tmp;
       tmp.vertices().reserve(effective_cluster_idx.size());
