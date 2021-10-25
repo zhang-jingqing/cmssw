@@ -5,12 +5,14 @@
 //ZJQ, need to make sure what's the strategy 
 //ZJQ, for applying minCosTheta and minCosPointing in out-to-in case
 bool HGCDoublet::checkCompatibilityAndTag(std::vector<HGCDoublet> &allDoublets,
-                                          const std::vector<int> &innerDoublets,
+                                          const std::vector<int> &neighborDoublets,
                                           const GlobalVector &refDir,
                                           float minCosTheta,
                                           float minCosPointing,
                                           bool debug) {
-  int nDoublets = innerDoublets.size();
+  //if out-to-in, the neighborDoublets is outerDoublets otherwise it is innerDoublets
+  bool external_seed_out_in(true);
+  int nDoublets = neighborDoublets.size();
   int constexpr VSIZE = 4;
   int ok[VSIZE];
   double xi[VSIZE];
@@ -20,15 +22,27 @@ bool HGCDoublet::checkCompatibilityAndTag(std::vector<HGCDoublet> &allDoublets,
   auto xo = outerX();
   auto yo = outerY();
   auto zo = outerZ();
+  ///ZJQ: when reconstruct from in-to-out, xi/yi/zi and xo/yo/zo are the inner most and outer most clusterid of the two sibling doublets
+  ///ZJQ: when reconstruct from out-to-in, to reuse the xi/yi/zi array, the xo/yo/zo are now the inner moster cluster id of the two sibling doublets and xi/yi/zi array are the outer most cluster id of the two sibling doublets
+  if (external_seed_out_in) {
+    xo = innerX();
+    yo = innerY();
+    zo = innerZ();
+  }
   unsigned int doubletId = theDoubletId_;
 
   auto loop = [&](int i, int vs) {
     for (int j = 0; j < vs; ++j) {
-      auto otherDoubletId = innerDoublets[i + j];
+      auto otherDoubletId = neighborDoublets[i + j];
       auto &otherDoublet = allDoublets[otherDoubletId];
-      xi[j] = otherDoublet.innerX();
-      yi[j] = otherDoublet.innerY();
-      zi[j] = otherDoublet.innerZ();
+      xi[j] = otherDoublet.innerX();//ZJQ: in-to-out, innerDoublets 
+      yi[j] = otherDoublet.innerY();//ZJQ: in-to-out, innerDoublets
+      zi[j] = otherDoublet.innerZ();//ZJQ: in-to-out, innerDoublets
+      if (external_seed_out_in) {
+        xi[j] = otherDoublet.outerX();//ZJQ: out-to-in, outerDoublets 
+        yi[j] = otherDoublet.outerY();//ZJQ: out-to-in, outerDoublets
+        zi[j] = otherDoublet.outerZ();//ZJQ: out-to-in, outerDoublets
+      }
       seedi[j] = otherDoublet.seedIndex();
       if (debug) {
         LogDebug("HGCDoublet") << i + j << " is doublet " << otherDoubletId << std::endl;
@@ -39,13 +53,18 @@ bool HGCDoublet::checkCompatibilityAndTag(std::vector<HGCDoublet> &allDoublets,
         ok[j] = 0;
         continue;
       }
-      ok[j] = areAligned(xi[j], yi[j], zi[j], xo, yo, zo, minCosTheta, minCosPointing, refDir, debug);
+      if (!external_seed_out_in) {
+        ok[j] = areAligned(xi[j], yi[j], zi[j], xo, yo, zo, minCosTheta, minCosPointing, refDir, debug);
+      } else {
+        ///ZJQ: note when out-to-in, xo,yo,zo are the inner most cluster and xi/yi/zi are outer most
+        ok[j] = areAligned(xo, yo, zo, xi[j], yi[j], zi[j], minCosTheta, minCosPointing, refDir, debug);
+      }
       if (debug) {
         LogDebug("HGCDoublet") << "Are aligned for InnerDoubletId: " << i + j << " is " << ok[j] << std::endl;
       }
     }
     for (int j = 0; j < vs; ++j) {
-      auto otherDoubletId = innerDoublets[i + j];
+      auto otherDoubletId = neighborDoublets[i + j];
       auto &otherDoublet = allDoublets[otherDoubletId];
       if (ok[j]) {
         otherDoublet.tagAsOuterNeighbor(doubletId);
@@ -62,6 +81,7 @@ bool HGCDoublet::checkCompatibilityAndTag(std::vector<HGCDoublet> &allDoublets,
     LogDebug("HGCDoublet") << "Found " << innerNeighbors_.size() << " compatible doublets out of " << nDoublets
                            << " considered" << std::endl;
   }
+  //if out-to-in, then root is outerNeighbors_.empty();
   return innerNeighbors_.empty();
 }
 
@@ -75,6 +95,7 @@ int HGCDoublet::areAligned(double xi,
                            float minCosPointing,
                            const GlobalVector &refDir,
                            bool debug) const {
+  bool extern_seed_out_in(true);
   auto dx1 = xo - xi;
   auto dy1 = yo - yi;
   auto dz1 = zo - zi;
@@ -82,6 +103,11 @@ int HGCDoublet::areAligned(double xi,
   auto dx2 = innerX() - xi;
   auto dy2 = innerY() - yi;
   auto dz2 = innerZ() - zi;
+  if (extern_seed_out_in) {
+    dx2 = outerX() - xi;
+    dy2 = outerY() - yi;
+    dz2 = outerZ() - zi;
+  }
 
   // inner product
   auto dot = dx1 * dx2 + dy1 * dy2 + dz1 * dz2;
@@ -134,26 +160,32 @@ void HGCDoublet::findNtuplets(std::vector<HGCDoublet> &allDoublets,
   if (!alreadyVisited_ && seedIndex == seedIndex_) {
     alreadyVisited_ = true;
     tmpNtuplet.push_back(theDoubletId_);
-    unsigned int numberOfOuterNeighbors = outerNeighbors_.size();
+    bool external_seed_out_in(true);
+    //ZJQ, if out-to-in, then here is innerNeighbors_.size();
     //ZJQ, external_seed flag, need be passed via function argument
     //ZJQ, update related outIn argument/parameter/variables to extendStartXXX, then almost all codes are same for both out-to-in and in-to-out
     //ZJQ, extendStart: extend[side/direction]-start[side/direction]
-    bool external_seed_out_in(false);
-    if (external_seed_out_in) {
-      numberOfOuterNeighbors = innerNeighbors_.size();
-    }
-    for (unsigned int i = 0; i < numberOfOuterNeighbors; ++i) {
-      allDoublets[outerNeighbors_[i]].findNtuplets(
-          allDoublets, tmpNtuplet, seedIndex, outInDFS, outInHops, maxOutInHops, outInToVisit);
-    }
-    if (outInDFS && outInHops < maxOutInHops) {
-      if (!external_seed_out_in) {
+    if (!external_seed_out_in) {
+      unsigned int numberOfOuterNeighbors = outerNeighbors_.size();
+      for (unsigned int i = 0; i < numberOfOuterNeighbors; ++i) {
+        allDoublets[outerNeighbors_[i]].findNtuplets(
+            allDoublets, tmpNtuplet, seedIndex, outInDFS, outInHops, maxOutInHops, outInToVisit);
+      }
+      if (outInDFS && outInHops < maxOutInHops) {
         for (auto inN : innerNeighbors_) {
           outInToVisit.emplace_back(inN, outInHops + 1);
         }
-      } else {
-        for (auto outN : outerNeighbors_) {
-          outInToVisit.emplace_back(outN, outInHops + 1);
+      }
+    } else {
+      ///ZJQ, if out-to-in, then here is innerNeighbors_[i]
+      unsigned int numberOfInnerNeighbors = innerNeighbors_.size();
+      for (unsigned int i = 0; i < numberOfInnerNeighbors; ++i) {
+        allDoublets[innerNeighbors_[i]].findNtuplets(
+            allDoublets, tmpNtuplet, seedIndex, outInDFS, outInHops, maxOutInHops, outInToVisit);
+        if (outInDFS && outInHops < maxOutInHops) {
+          for (auto outN : outerNeighbors_) {
+            outInToVisit.emplace_back(outN, outInHops + 1);
+          }
         }
       }
     }

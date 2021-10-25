@@ -29,7 +29,7 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
   allDoublets_.clear();
   theRootDoublets_.clear();
   //ZJQ
-  bool external_seed_out_in(false);
+  bool external_seed_out_in(true);
   std::vector<int> neigDoublets;
   bool checkDistanceRootDoubletVsSeed = root_doublet_max_distance_from_seed_squared < 9999;
   float origin_eta;
@@ -48,6 +48,7 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
       origin_phi = 0;
     } else {
       //ZJQ, maxNumberOfLayers is the lastLayer in RecHitTools, same side with seed?
+      //ZJQ, maxNumberOfLayers is the max layers of detector no matter there is hit or not?
       //ZJQ, RecHitTools::lastLayer() is for zSide = 0 or 1 or both? seems for both
       //ZJQ, zSide = 0 for positive, zSide = 1 for negative;
       //ZJQ, for hit layers, first pos layers, then neg layers?
@@ -195,6 +196,8 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
                     //ZJQ, if out-to-in, the neigDoublets is the outer neighbours
                     neigDoublets.clear();
                     if (!external_seed_out_in) {
+                      //ZJQ, only one layerCluster only belongs to on doublet??
+                      //ZJQ, if so, how to reconstruct such neigDoublets???
                       neigDoublets = isOuterClusterOfDoublets_[innerClusterId];
                     } else {
                       int thisOuterClusterId = allDoublets_[doubletId].outerClusterId();
@@ -221,8 +224,14 @@ void HGCGraphT<TILES>::makeAndConnectDoublets(const TILES &histo,
                                                                               verbosity_ > Advanced);
                     if (isRootDoublet and checkDistanceRootDoubletVsSeed) {
                       auto dEtaSquared = (layerClusters[innerClusterId].eta() - origin_eta);
+                      if (external_seed_out_in) {
+                        dEtaSquared = (layerClusters[outerClusterId].eta() - origin_eta);
+                      }
                       dEtaSquared *= dEtaSquared;
                       auto dPhiSquared = (layerClusters[innerClusterId].phi() - origin_phi);
+                      if (external_seed_out_in) {
+                        dPhiSquared = (layerClusters[outerClusterId].phi() - origin_phi);
+                      }
                       dPhiSquared *= dPhiSquared;
                       if (dEtaSquared + dPhiSquared > root_doublet_max_distance_from_seed_squared)
                         isRootDoublet = false;
